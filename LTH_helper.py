@@ -11,7 +11,7 @@ class LTH:
     def test(self, a):
         print(a)
         
-    def get_prunned_model(self, filename, layers_to_pune, X_train, y_train, pm = 0.20):
+    def get_prunned_model(self, filename, layers_to_pune, X_train, y_train, pm):
         """
         Given a filename with weights, and a list with layers to prune, returns a pruned model with correct mask
         X_train, y_train are necesary to get the mask calculated by keras (Needs a fit) pm = 1 - sparcity as mentioned in paper
@@ -38,7 +38,7 @@ class LTH:
         pruned_model.fit(X_train[0:1], y_train[0:1], epochs=1, verbose=0, callbacks=[tfmot.sparsity.keras.UpdatePruningStep()])
         return pruned_model
     
-    def initialize_sparse_model(self, filename, pruned_model_with_mask, pm = 0.20):
+    def initialize_sparse_model(self, filename, pruned_model_with_mask, pm):
         """
             given a filename with weights and a pruned model, returns a new model pruned equal but with weights in filename
         """
