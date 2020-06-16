@@ -1,5 +1,4 @@
 __pycache__/
 .ipynb_checkpoints/
-*.npy
+data/
 *.hdf5
-*.csv
