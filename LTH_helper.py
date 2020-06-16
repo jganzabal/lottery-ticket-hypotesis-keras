@@ -2,20 +2,22 @@ import tensorflow_model_optimization as tfmot
 import numpy as np
 from tensorflow.keras.models import Sequential
 from tensorflow.keras import optimizers
+import tensorflow as tf
 
 class LTH:
-    def __init__(self, get_model, compile_model):
+    def __init__(self, get_model):
         self.get_model = get_model
-        self.compile_model = compile_model
     
     def test(self, a):
         print(a)
         
-    def get_prunned_model(self, filename, layers_to_pune, X_train, y_train, pm):
+    def get_prunned_model(self, filename, pm=0.5, X_train=None, y_train=None, layers_to_prune=None):
         """
         Given a filename with weights, and a list with layers to prune, returns a pruned model with correct mask
         X_train, y_train are necesary to get the mask calculated by keras (Needs a fit) pm = 1 - sparcity as mentioned in paper
         """
+        
+        
         sparcity = 1 - pm
         sprasity_sched = tfmot.sparsity.keras.ConstantSparsity(
             sparcity, 
@@ -25,9 +27,23 @@ class LTH:
         )
         model = self.get_model()
         model.load_weights(filename)
+        
+        if X_train is None:
+            X_train = np.random.normal(0, 0.2, model.input_shape[1]).reshape(1, -1)
+            if model.loss == 'sparse_categorical_crossentropy':
+                y_train = np.array([np.random.randint(model.output_shape[1])]).reshape(1, -1)
+            else:
+                y_train = np.random.normal(0, 0.2, model.output_shape[1]).reshape(1, -1)
+        
+        if layers_to_prune is None:
+            layers_to_prune = []
+            for layer in model.layers:
+                if isinstance(layer, tf.keras.layers.Dense):
+                    layers_to_prune.append(layer.name)
+                    
         prunned_model_layers = []
         for layer in model.layers:
-            if layer.name in layers_to_pune:
+            if layer.name in layers_to_prune:
                 prunned_model_layers.append(tfmot.sparsity.keras.prune_low_magnitude(layer, sprasity_sched))
             else:
                 prunned_model_layers.append(layer)
@@ -64,9 +80,15 @@ class LTH:
         prunned_model.compile(optimizer=optimizers.SGD(lr=0), loss='sparse_categorical_crossentropy', metrics='accuracy')
         return prunned_model
     
+    def test_model_sparsity(self, model):
+        for i, layer in enumerate(model.layers):
+            if isinstance(layer, tfmot.sparsity.keras.pruning_wrapper.PruneLowMagnitude):
+                sparcity = (layer.get_weights()[0]==0).sum()/np.product((layer.get_weights()[0]==0).shape)
+                print(layer.name, sparcity)
     
     def verify_mask_with_model_min_weights(self, model_, pruned_model):
         """
+        Verifies that min of weights with mask 1 is higher than max of weights with mask 0
         model_ can be a filename with weights or the model
         """
         if type(model_) == str:
