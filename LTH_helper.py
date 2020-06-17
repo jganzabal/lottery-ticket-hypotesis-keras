@@ -26,7 +26,8 @@ class LTH:
             frequency=10000000
         )
         model = self.get_model()
-        model.load_weights(filename)
+        if filename is not None:
+            model.load_weights(filename)
         
         if X_train is None:
             X_train = np.random.normal(0, 0.2, model.input_shape[1]).reshape(1, -1)
@@ -84,7 +85,8 @@ class LTH:
         for i, layer in enumerate(model.layers):
             if isinstance(layer, tfmot.sparsity.keras.pruning_wrapper.PruneLowMagnitude):
                 sparcity = (layer.get_weights()[0]==0).sum()/np.product((layer.get_weights()[0]==0).shape)
-                print(layer.name, sparcity)
+                mask = layer.pruning_vars[0][1].numpy().sum()/np.product((layer.get_weights()[0]==0).shape)
+                print(f'{layer.name}: {sparcity}, {mask}')
     
     def verify_mask_with_model_min_weights(self, model_, pruned_model):
         """
