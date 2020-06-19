@@ -11,12 +11,16 @@ class LTH:
     def test(self, a):
         print(a)
         
-    def get_prunned_model(self, filename, pm=0.5, X_train=None, y_train=None, layers_to_prune=None):
+    def get_prunned_model(self, model, pm=0.5, X_train=None, y_train=None, layers_to_prune=None):
         """
         Given a filename with weights, and a list with layers to prune, returns a pruned model with correct mask
         X_train, y_train are necesary to get the mask calculated by keras (Needs a fit) pm = 1 - sparcity as mentioned in paper
         """
         
+        if type(model) == str:
+            model = self.get_model()
+            if filename is not None:
+                model.load_weights(filename)
         
         sparcity = 1 - pm
         sprasity_sched = tfmot.sparsity.keras.ConstantSparsity(
@@ -25,9 +29,7 @@ class LTH:
             end_step=0, # Do it only once
             frequency=10000000
         )
-        model = self.get_model()
-        if filename is not None:
-            model.load_weights(filename)
+        
         
         if X_train is None:
             X_train = np.random.normal(0, 0.2, model.input_shape[1]).reshape(1, -1)
@@ -41,13 +43,14 @@ class LTH:
             for layer in model.layers:
                 if isinstance(layer, tf.keras.layers.Dense):
                     layers_to_prune.append(layer.name)
-                    
+        
         prunned_model_layers = []
         for layer in model.layers:
             if layer.name in layers_to_prune:
                 prunned_model_layers.append(tfmot.sparsity.keras.prune_low_magnitude(layer, sprasity_sched))
             else:
                 prunned_model_layers.append(layer)
+        del model
         pruned_model = Sequential(prunned_model_layers)
 
         # This is necesary to make keras calculate the mask, learning rate is 0
@@ -55,10 +58,14 @@ class LTH:
         pruned_model.fit(X_train[0:1], y_train[0:1], epochs=1, verbose=0, callbacks=[tfmot.sparsity.keras.UpdatePruningStep()])
         return pruned_model
     
-    def initialize_sparse_model(self, filename, pruned_model_with_mask, pm):
+    def initialize_sparse_model(self, model, pruned_model_with_mask, pm):
         """
             given a filename with weights and a pruned model, returns a new model pruned equal but with weights in filename
         """
+        if type(model) == str:
+            model = self.get_model()
+            model.load_weights(filename)
+        
         sparcity = 1 - pm
         sprasity_sched = tfmot.sparsity.keras.ConstantSparsity(
             sparcity, 
@@ -66,8 +73,7 @@ class LTH:
             end_step=0, 
             frequency=10000000
         )
-        model = self.get_model()
-        model.load_weights(filename)
+
         prunned_model_layers = []
         for i, layer in enumerate(pruned_model_with_mask.layers):
             if isinstance(layer, tfmot.sparsity.keras.pruning_wrapper.PruneLowMagnitude):
