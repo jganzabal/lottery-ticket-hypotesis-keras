@@ -32,7 +32,7 @@ class LTH:
         
         
         if X_train is None:
-            X_train = np.random.normal(0, 0.2, model.input_shape[1]).reshape(1, -1)
+            X_train = np.random.normal(0, 0.2, [1] + model.input.shape.as_list()[1:])
             if model.loss == 'sparse_categorical_crossentropy':
                 y_train = np.array([np.random.randint(model.output_shape[1])]).reshape(1, -1)
             else:
@@ -41,7 +41,7 @@ class LTH:
         if layers_to_prune is None:
             layers_to_prune = []
             for layer in model.layers:
-                if isinstance(layer, tf.keras.layers.Dense):
+                if isinstance(layer, tf.keras.layers.Dense) or isinstance(layer, tf.keras.layers.Conv2D):
                     layers_to_prune.append(layer.name)
         
         prunned_model_layers = []
