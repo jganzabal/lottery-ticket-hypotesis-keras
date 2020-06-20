@@ -60,7 +60,7 @@ class LTH:
     
     def initialize_sparse_model(self, model, pruned_model_with_mask, pm):
         """
-            given a filename with weights and a pruned model, returns a new model pruned equal but with weights in filename
+            Given a filename (or a model) with weights and a pruned model with its mask, returns a new model with weights in filename and pruned with mask
         """
         if type(model) == str:
             model = self.get_model()
