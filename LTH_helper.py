@@ -39,26 +39,31 @@ def prune_and_initilize(trained_model, pm, initial_weights, layers_to_prune=None
         end_step=0, # Do it only once
         frequency=10000000
     )
-    if not is_pruned(trained_model):
-        model = clone_model(trained_model)
-        model.set_weights(trained_model.get_weights())
-        
-        if layers_to_prune is None:
-            layers_to_prune = get_default_layers(model)
+    
+    model = clone_model(trained_model)
+    model.set_weights(trained_model.get_weights())
+    if is_pruned(model):
+        model = tfmot.sparsity.keras.strip_pruning(model)
 
-        prunned_model_layers = []
-        for layer in model.layers:
-            if layer.name in layers_to_prune:
-                prunned_model_layers.append(tfmot.sparsity.keras.prune_low_magnitude(layer, sprasity_sched))
-            else:
-                prunned_model_layers.append(layer)
+    if layers_to_prune is None:
+        layers_to_prune = get_default_layers(model)
 
-        trained_pruned_model = Sequential(prunned_model_layers)
-        # Calculates mask
-        initialize_pruned_model(trained_pruned_model)
-    else:
-        trained_pruned_model = trained_model
-        model = tfmot.sparsity.keras.strip_pruning(trained_model)
+    prunned_model_layers = []
+    for layer in model.layers:
+        if layer.name in layers_to_prune:
+            prunned_model_layers.append(tfmot.sparsity.keras.prune_low_magnitude(layer, sprasity_sched))
+        else:
+            prunned_model_layers.append(layer)
+
+    trained_pruned_model = Sequential(prunned_model_layers)
+    # Calculates mask
+    initialize_pruned_model(trained_pruned_model)
+#         print('entra')
+#         test_model_sparsity(trained_pruned_model)
+#     else:
+#         trained_pruned_model = clone_model(trained_model)
+#         initialize_pruned_model(trained_pruned_model)
+#         model = tfmot.sparsity.keras.strip_pruning(trained_model)
         
     model.load_weights(initial_weights)
     prunned_model_layers = []
@@ -136,6 +141,15 @@ def initialize_sparse_model(trained_model, pruned_model_with_mask, pm):
     prunned_model.compile(optimizer=optimizers.SGD(lr=0), loss='sparse_categorical_crossentropy', metrics='accuracy')
     return prunned_model
     
+def test_model_sparsity(model):
+    for i, layer in enumerate(model.layers):
+        if isinstance(layer, tfmot.sparsity.keras.pruning_wrapper.PruneLowMagnitude):
+            sparcity = (layer.get_weights()[0]==0).sum()/np.product((layer.get_weights()[0]==0).shape)
+            mask = layer.pruning_vars[0][1].numpy().sum()/np.product((layer.get_weights()[0]==0).shape)
+            print(f'{layer.name}: {sparcity}, {mask}')
+        elif isinstance(layer, tf.keras.layers.Dense) or isinstance(layer, tf.keras.layers.Conv2D):
+            sparcity = (layer.get_weights()[0]==0).sum()/np.product((layer.get_weights()[0]==0).shape)
+            print(f'{layer.name}: {sparcity} - no mask')
     
 class LTH:
     def __init__(self, get_model):
