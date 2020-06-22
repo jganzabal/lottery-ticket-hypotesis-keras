@@ -1,8 +1,9 @@
-import tensorflow_model_optimization as tfmot
 import numpy as np
-from tensorflow.keras.models import Sequential, clone_model
+from tensorflow.keras.models import Sequential, clone_model, Model
+from tensorflow.keras.layers import Input
 from tensorflow.keras import optimizers
 import tensorflow as tf
+from tensorflow_model_optimization.sparsity.keras import prune_low_magnitude, ConstantSparsity, UpdatePruningStep, strip_pruning, pruning_wrapper
 
 
 def get_default_layers(model):
@@ -22,18 +23,49 @@ def initialize_pruned_model(pruned_model):
     else:
         y_train = np.random.normal(0, 0.2, pruned_model.output_shape[1]).reshape(1, -1)
         
-    pruned_model.fit(X_train[0:1], y_train[0:1], epochs=1, verbose=0, callbacks=[tfmot.sparsity.keras.UpdatePruningStep()])
+    pruned_model.fit(X_train[0:1], y_train[0:1], epochs=1, verbose=0, callbacks=[UpdatePruningStep()])
     return pruned_model
 
 def is_pruned(model):
     for layer in model.layers:
-        if isinstance(layer, tfmot.sparsity.keras.pruning_wrapper.PruneLowMagnitude):
+        if isinstance(layer, pruning_wrapper.PruneLowMagnitude):
             return True
     return False
 
+def apply_wrapper_to_layer(model_to_clone, layer_names, wrapper, sprasity_sched, clone=False):
+    if clone:
+        model = clone_model(model_to_clone)
+        model.set_weights(model_to_clone.get_weights())
+    else:
+        model = model_to_clone
+        
+    layers = [l for l in model.layers]
+    
+    if not isinstance(model.layers[0], tf.python.keras.engine.input_layer.InputLayer):
+        prunned_model_layers = []
+        for layer in model.layers:
+            if layer.name in layer_names:
+                prunned_model_layers.append(wrapper(layer, sprasity_sched))
+            else:
+                prunned_model_layers.append(layer)
+        new_model = Sequential(prunned_model_layers)
+    else:
+        in_shape = model.layers[0].input_shape[0]
+        layers = layers[1:]
+        inp = Input(shape=in_shape[1:])
+        x = inp
+        for layer in layers:
+            if layer.name in layer_names:
+                x = wrapper(layer, sprasity_sched)(x)
+            else:
+                x = layer(x)
+
+        new_model = Model(inp, x)
+    return new_model
+
 def prune_and_initilize(trained_model, pm, initial_weights, layers_to_prune=None):
     sparcity = 1 - pm
-    sprasity_sched = tfmot.sparsity.keras.ConstantSparsity(
+    sprasity_sched = ConstantSparsity(
         sparcity, 
         0, # Do sparcity calculation in the first step
         end_step=0, # Do it only once
@@ -42,37 +74,34 @@ def prune_and_initilize(trained_model, pm, initial_weights, layers_to_prune=None
     
     model = clone_model(trained_model)
     model.set_weights(trained_model.get_weights())
+    
     if is_pruned(model):
-        model = tfmot.sparsity.keras.strip_pruning(model)
+        model = strip_pruning(model)
 
     if layers_to_prune is None:
         layers_to_prune = get_default_layers(model)
 
-    prunned_model_layers = []
-    for layer in model.layers:
-        if layer.name in layers_to_prune:
-            prunned_model_layers.append(tfmot.sparsity.keras.prune_low_magnitude(layer, sprasity_sched))
-        else:
-            prunned_model_layers.append(layer)
+#     prunned_model_layers = []
+#     for layer in model.layers:
+#         if layer.name in layers_to_prune:
+#             prunned_model_layers.append(prune_low_magnitude(layer, sprasity_sched))
+#         else:
+#             prunned_model_layers.append(layer)
 
-    trained_pruned_model = Sequential(prunned_model_layers)
+#     trained_pruned_model = Sequential(prunned_model_layers)
+    
+    trained_pruned_model = apply_wrapper_to_layer(model, layers_to_prune, prune_low_magnitude, sprasity_sched, clone=False)
     # Calculates mask
     initialize_pruned_model(trained_pruned_model)
-#         print('entra')
-#         test_model_sparsity(trained_pruned_model)
-#     else:
-#         trained_pruned_model = clone_model(trained_model)
-#         initialize_pruned_model(trained_pruned_model)
-#         model = tfmot.sparsity.keras.strip_pruning(trained_model)
         
     model.load_weights(initial_weights)
     prunned_model_layers = []
     for i, layer in enumerate(trained_pruned_model.layers):
-        if isinstance(layer, tfmot.sparsity.keras.pruning_wrapper.PruneLowMagnitude):
+        if isinstance(layer, pruning_wrapper.PruneLowMagnitude):
             l_weights = model.layers[i].get_weights()
             l_weights[0] = l_weights[0]*layer.pruning_vars[0][1].numpy()
             model.layers[i].set_weights(l_weights)        
-            prunned_model_layers.append(tfmot.sparsity.keras.prune_low_magnitude(model.layers[i], sprasity_sched))
+            prunned_model_layers.append(prune_low_magnitude(model.layers[i], sprasity_sched))
         else:
             prunned_model_layers.append(model.layers[i])
     untrained_prunned_model = Sequential(prunned_model_layers)
@@ -89,7 +118,7 @@ def get_prunned_model(trained_model, pm=0.5, X_train=None, y_train=None, layers_
     model.set_weights(trained_model.get_weights())
 
     sparcity = 1 - pm
-    sprasity_sched = tfmot.sparsity.keras.ConstantSparsity(
+    sprasity_sched = ConstantSparsity(
         sparcity, 
         0, # Do sparcity calculation in the first step
         end_step=0, # Do it only once
@@ -102,7 +131,7 @@ def get_prunned_model(trained_model, pm=0.5, X_train=None, y_train=None, layers_
     prunned_model_layers = []
     for layer in model.layers:
         if layer.name in layers_to_prune:
-            prunned_model_layers.append(tfmot.sparsity.keras.prune_low_magnitude(layer, sprasity_sched))
+            prunned_model_layers.append(prune_low_magnitude(layer, sprasity_sched))
         else:
             prunned_model_layers.append(layer)
 
@@ -121,7 +150,7 @@ def initialize_sparse_model(trained_model, pruned_model_with_mask, pm):
     model.set_weights(trained_model.get_weights())
 
     sparcity = 1 - pm
-    sprasity_sched = tfmot.sparsity.keras.ConstantSparsity(
+    sprasity_sched = ConstantSparsity(
         sparcity, 
         0, # Do sparcity calculation in the first step
         end_step=0, 
@@ -130,11 +159,11 @@ def initialize_sparse_model(trained_model, pruned_model_with_mask, pm):
 
     prunned_model_layers = []
     for i, layer in enumerate(pruned_model_with_mask.layers):
-        if isinstance(layer, tfmot.sparsity.keras.pruning_wrapper.PruneLowMagnitude):
+        if isinstance(layer, pruning_wrapper.PruneLowMagnitude):
             l_weights = model.layers[i].get_weights()
             l_weights[0] = l_weights[0]*layer.pruning_vars[0][1].numpy()
             model.layers[i].set_weights(l_weights)        
-            prunned_model_layers.append(tfmot.sparsity.keras.prune_low_magnitude(model.layers[i], sprasity_sched))
+            prunned_model_layers.append(prune_low_magnitude(model.layers[i], sprasity_sched))
         else:
             prunned_model_layers.append(model.layers[i])
     prunned_model = Sequential(prunned_model_layers)
@@ -143,7 +172,7 @@ def initialize_sparse_model(trained_model, pruned_model_with_mask, pm):
     
 def test_model_sparsity(model):
     for i, layer in enumerate(model.layers):
-        if isinstance(layer, tfmot.sparsity.keras.pruning_wrapper.PruneLowMagnitude):
+        if isinstance(layer, pruning_wrapper.PruneLowMagnitude):
             sparcity = (layer.get_weights()[0]==0).sum()/np.product((layer.get_weights()[0]==0).shape)
             mask = layer.pruning_vars[0][1].numpy().sum()/np.product((layer.get_weights()[0]==0).shape)
             print(f'{layer.name}: {sparcity}, {mask}')
@@ -177,7 +206,7 @@ class LTH:
             model.set_weights(model_or_file.get_weights())
         
         sparcity = 1 - pm
-        sprasity_sched = tfmot.sparsity.keras.ConstantSparsity(
+        sprasity_sched = ConstantSparsity(
             sparcity, 
             0, # Do sparcity calculation in the first step
             end_step=0, # Do it only once
@@ -190,7 +219,7 @@ class LTH:
         prunned_model_layers = []
         for layer in model.layers:
             if layer.name in layers_to_prune:
-                prunned_model_layers.append(tfmot.sparsity.keras.prune_low_magnitude(layer, sprasity_sched))
+                prunned_model_layers.append(prune_low_magnitude(layer, sprasity_sched))
             else:
                 prunned_model_layers.append(layer)
         
@@ -213,7 +242,7 @@ class LTH:
             model.set_weights(model_or_file.get_weights())
         
         sparcity = 1 - pm
-        sprasity_sched = tfmot.sparsity.keras.ConstantSparsity(
+        sprasity_sched = ConstantSparsity(
             sparcity, 
             0, # Do sparcity calculation in the first step
             end_step=0, 
@@ -222,11 +251,11 @@ class LTH:
 
         prunned_model_layers = []
         for i, layer in enumerate(pruned_model_with_mask.layers):
-            if isinstance(layer, tfmot.sparsity.keras.pruning_wrapper.PruneLowMagnitude):
+            if isinstance(layer, pruning_wrapper.PruneLowMagnitude):
                 l_weights = model.layers[i].get_weights()
                 l_weights[0] = l_weights[0]*layer.pruning_vars[0][1].numpy()
                 model.layers[i].set_weights(l_weights)        
-                prunned_model_layers.append(tfmot.sparsity.keras.prune_low_magnitude(model.layers[i], sprasity_sched))
+                prunned_model_layers.append(prune_low_magnitude(model.layers[i], sprasity_sched))
             else:
                 prunned_model_layers.append(model.layers[i])
         prunned_model = Sequential(prunned_model_layers)
@@ -235,7 +264,7 @@ class LTH:
     
     def test_model_sparsity(self, model):
         for i, layer in enumerate(model.layers):
-            if isinstance(layer, tfmot.sparsity.keras.pruning_wrapper.PruneLowMagnitude):
+            if isinstance(layer, pruning_wrapper.PruneLowMagnitude):
                 sparcity = (layer.get_weights()[0]==0).sum()/np.product((layer.get_weights()[0]==0).shape)
                 mask = layer.pruning_vars[0][1].numpy().sum()/np.product((layer.get_weights()[0]==0).shape)
                 print(f'{layer.name}: {sparcity}, {mask}')
@@ -251,7 +280,7 @@ class LTH:
         else:
             model = model_
         for i, layer in enumerate(pruned_model.layers):
-            if isinstance(layer, tfmot.sparsity.keras.pruning_wrapper.PruneLowMagnitude):
+            if isinstance(layer, pruning_wrapper.PruneLowMagnitude):
                 weights_abs = np.abs(model.layers[i].get_weights()[0])
                 mask = layer.pruning_vars[0][1].numpy()
 
