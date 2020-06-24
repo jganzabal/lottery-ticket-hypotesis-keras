@@ -4,6 +4,7 @@ from tensorflow.keras.layers import Input
 from tensorflow.keras import optimizers
 import tensorflow as tf
 from matplotlib import pyplot as plt
+from matplotlib import cm
 from tensorflow_model_optimization.sparsity.keras import prune_low_magnitude, ConstantSparsity, UpdatePruningStep, strip_pruning, pruning_wrapper
 
 
@@ -298,110 +299,48 @@ def plot_MC_boundaries_keras(X_train, y_train, score, probability_func, degree=N
             size=40, horizontalalignment='right')
     return xx, yy, Z_reshaped    
     
-# class LTH:
-#     def __init__(self, get_model):
-#         self.get_model = get_model
+def prune_delta_weights(model, X, y, epochs=1):
+    weights_0 = model.get_weights().copy()
+    model.fit(X, y, epochs=epochs)
+    weights_1 = model.get_weights()
+    model_mask = []
+    masked_weights_untrained = []
+    masked_weights_trained = []
+    for i in range(len(weights_0)):
+        layer_mask = np.abs(weights_1[i]) > np.abs(weights_0[i])
+        model_mask.append(layer_mask)
+        masked_weights_untrained.append(layer_mask*weights_0[i])
+        masked_weights_trained.append(layer_mask*weights_1[i])
+        
+    model_delta_untrained = clone_model(model)
+    model_delta_untrained.set_weights(masked_weights_untrained)
     
-#     def test(self, a):
-#         print(a)
+    model_delta_trained = clone_model(model)
+    model_delta_trained.set_weights(masked_weights_trained)
     
-    
-    
-    
-        
-    
-#     def get_prunned_model(self, model_or_file, pm=0.5, X_train=None, y_train=None, layers_to_prune=None):
-#         """
-#         Given a filename with weights, and a list with layers to prune, returns a pruned model with correct mask
-#         X_train, y_train are necesary to get the mask calculated by keras (Needs a fit) pm = 1 - sparcity as mentioned in paper
-#         """
-        
-#         if type(model_or_file) == str:
-#             model = self.get_model()
-#             model.load_weights(model_or_file)
-#         else:
-#             model = clone_model(model_or_file)
-#             model.set_weights(model_or_file.get_weights())
-        
-#         sparcity = 1 - pm
-#         sprasity_sched = ConstantSparsity(
-#             sparcity, 
-#             0, # Do sparcity calculation in the first step
-#             end_step=0, # Do it only once
-#             frequency=10000000
-#         )
-        
-#         if layers_to_prune is None:
-#             layers_to_prune = get_default_layers(model)
-        
-#         prunned_model_layers = []
-#         for layer in model.layers:
-#             if layer.name in layers_to_prune:
-#                 prunned_model_layers.append(prune_low_magnitude(layer, sprasity_sched))
-#             else:
-#                 prunned_model_layers.append(layer)
-        
-#         pruned_model = Sequential(prunned_model_layers)
-#         del model
-#         # This is necesary to make keras calculate the mask, learning rate is 0
-#         initialize_pruned_model(pruned_model)
-        
-#         return pruned_model
-    
-#     def initialize_sparse_model(self, model_or_file, pruned_model_with_mask, pm):
-#         """
-#             Given a filename (or a model) with weights and a pruned model with its mask, returns a new model with weights in filename and pruned with mask
-#         """
-#         if type(model_or_file) == str:
-#             model = self.get_model()
-#             model.load_weights(model_or_file)
-#         else:
-#             model = clone_model(model_or_file)
-#             model.set_weights(model_or_file.get_weights())
-        
-#         sparcity = 1 - pm
-#         sprasity_sched = ConstantSparsity(
-#             sparcity, 
-#             0, # Do sparcity calculation in the first step
-#             end_step=0, 
-#             frequency=10000000
-#         )
+    model_untrained = clone_model(model)
+    model_untrained.set_weights(weights_0)
+    return model_delta_untrained, model_delta_trained, model_untrained
 
-#         prunned_model_layers = []
-#         for i, layer in enumerate(pruned_model_with_mask.layers):
-#             if isinstance(layer, pruning_wrapper.PruneLowMagnitude):
-#                 l_weights = model.layers[i].get_weights()
-#                 l_weights[0] = l_weights[0]*layer.pruning_vars[0][1].numpy()
-#                 model.layers[i].set_weights(l_weights)        
-#                 prunned_model_layers.append(prune_low_magnitude(model.layers[i], sprasity_sched))
-#             else:
-#                 prunned_model_layers.append(model.layers[i])
-#         prunned_model = Sequential(prunned_model_layers)
-#         prunned_model.compile(optimizer=optimizers.SGD(lr=0), loss='sparse_categorical_crossentropy', metrics='accuracy')
-#         return prunned_model
+def get_model_sparcity(model):
+    masked_weights = model.get_weights()
+    total_w = 0
+    total_zeros = 0
+    for layer in model.layers:
+        print(f'{layer.name}: ')
+        for masked_weights in layer.get_weights():
+            with_zero = (masked_weights == 0).sum()
+            total_layer_w = (np.product(masked_weights.shape)).sum()
+            sparcity = with_zero/total_layer_w
+            total_w+=total_layer_w
+            total_zeros+=with_zero
+            print(sparcity, total_layer_w)
+        print()
+    print('Network sparcity:')
+    print(total_zeros/total_w)
     
-#     def test_model_sparsity(self, model):
-#         for i, layer in enumerate(model.layers):
-#             if isinstance(layer, pruning_wrapper.PruneLowMagnitude):
-#                 sparcity = (layer.get_weights()[0]==0).sum()/np.product((layer.get_weights()[0]==0).shape)
-#                 mask = layer.pruning_vars[0][1].numpy().sum()/np.product((layer.get_weights()[0]==0).shape)
-#                 print(f'{layer.name}: {sparcity}, {mask}')
-    
-#     def verify_mask_with_model_min_weights(self, model_, pruned_model):
-#         """
-#         Verifies that min of weights with mask 1 is higher than max of weights with mask 0
-#         model_ can be a filename with weights or the model
-#         """
-#         if type(model_) == str:
-#             model = self.get_model()
-#             model.load_weights(model_)
-#         else:
-#             model = model_
-#         for i, layer in enumerate(pruned_model.layers):
-#             if isinstance(layer, pruning_wrapper.PruneLowMagnitude):
-#                 weights_abs = np.abs(model.layers[i].get_weights()[0])
-#                 mask = layer.pruning_vars[0][1].numpy()
-
-#                 # Verify that min of weights with mask 1 is higher than max of weights with mask 0
-#                 print(f'{layer.name}: {np.min(weights_abs[mask==1]) > np.max(weights_abs[mask==0])}, shape: {mask.shape}, sparcity: {1 - mask.sum()/np.product(mask.shape)}')
-            
+def plot_binary_multiclass_model(model, X, y,  mesh_res = 200, ax=None, colors=None):
+    if colors is None:
+        colors = cm.rainbow(np.linspace(0.0, 1.0, np.unique(y).size))
+    acc = model.evaluate(X, y, verbose=0)[1]
+    xx, yy, Z = plot_MC_boundaries_keras(X, y, acc, model.predict, my_colors=colors, mesh_res = mesh_res, alpha=1.0, almost_white=1-1/9, ax=ax)
